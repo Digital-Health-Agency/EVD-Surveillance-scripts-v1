@@ -23,10 +23,11 @@ services:
       DESTINATION__FILESYSTEM__CREDENTIALS__AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
       DESTINATION__FILESYSTEM__CREDENTIALS__AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       DESTINATION__FILESYSTEM__CREDENTIALS__ENDPOINT_URL: ${MINIO_ENDPOINT_URL:-http://host.docker.internal:9000}
+      DATASOURCES__LIMS__API_TOKEN: ${LIMS_API_TOKEN}
       # krcs_evd_screening pulls from the KRCS Data Capture Forms (Frappe) API.
-      # Left blank rather than `:?required` so a deployment that only runs
-      # mdharura still starts; the loader fails that one asset with a clear
-      # message instead of taking the whole stack down.
+      # Left blank rather than `:?required` so a deployment that does not run this
+      # source still starts; the loader fails that one asset with a clear message
+      # instead of taking the whole stack down.
       DATASOURCES__KRCS_EVD_SCREENING__BASE_URL: ${KRCS_EVD_SCREENING_BASE_URL:-}
       DATASOURCES__KRCS_EVD_SCREENING__API_KEY: ${KRCS_EVD_SCREENING_API_KEY:-}
       DATASOURCES__KRCS_EVD_SCREENING__API_SECRET: ${KRCS_EVD_SCREENING_API_SECRET:-}
