@@ -31,8 +31,9 @@ services:
       - dagster_data:/opt/dagster/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - evd-net 
     restart: unless-stopped
-
   # Dequeues and executes runs, and fires schedules/sensors. Runs execute as
   # subprocesses of this container — size its resources for the heaviest run.
   daemon:
@@ -44,7 +45,12 @@ services:
       - dagster_data:/opt/dagster/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - evd-net
     restart: unless-stopped
 
 volumes:
   dagster_data:
+networks:
+  evd-net:
+    external: true
