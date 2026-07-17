@@ -27,12 +27,21 @@ services:
       DATASOURCES__KRCS_EVD_SCREENING__BASE_URL: ${KRCS_EVD_SCREENING_BASE_URL:-}
       DATASOURCES__KRCS_EVD_SCREENING__API_KEY: ${KRCS_EVD_SCREENING_API_KEY:-}
       DATASOURCES__KRCS_EVD_SCREENING__API_SECRET: ${KRCS_EVD_SCREENING_API_SECRET:-}
+      # quarantine feed: same site/token as screening, separate loader + endpoint
+      DATASOURCES__KRCS_EVD_QUARANTINE__BASE_URL: ${KRCS_EVD_QUARANTINE_BASE_URL:-}
+      DATASOURCES__KRCS_EVD_QUARANTINE__API_KEY: ${KRCS_EVD_QUARANTINE_API_KEY:-}
+      DATASOURCES__KRCS_EVD_QUARANTINE__API_SECRET: ${KRCS_EVD_QUARANTINE_API_SECRET:-}
+      DATASOURCES__TAIFA_CARE_KENYAEMR__BASE_URL: ${TAIFA_CARE_KENYAEMR_BASE_URL:-}
+      DATASOURCES__TAIFA_CARE_KENYAEMR__TOKEN_URL: ${TAIFA_CARE_KENYAEMR_TOKEN_URL:-}
+      DATASOURCES__TAIFA_CARE_KENYAEMR__CLIENT_ID: ${TAIFA_CARE_KENYAEMR_CLIENT_ID:-}
+      DATASOURCES__TAIFA_CARE_KENYAEMR__CLIENT_SECRET: ${TAIFA_CARE_KENYAEMR_CLIENT_SECRET:-}
     volumes:
       - dagster_data:/opt/dagster/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - evd-net 
     restart: unless-stopped
-
   # Dequeues and executes runs, and fires schedules/sensors. Runs execute as
   # subprocesses of this container — size its resources for the heaviest run.
   daemon:
@@ -44,7 +53,12 @@ services:
       - dagster_data:/opt/dagster/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - evd-net
     restart: unless-stopped
 
 volumes:
   dagster_data:
+networks:
+  evd-net:
+    external: true
