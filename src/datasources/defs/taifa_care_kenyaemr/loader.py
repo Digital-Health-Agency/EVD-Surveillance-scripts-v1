@@ -1,8 +1,9 @@
 """Load passively-flagged surveillance cases from Taifa Care (KenyaEMR) into MinIO.
 
 The DMI system on the KenyaHMIS platform
-exposes cases that KenyaEMR has flagged against notifiable/priority conditions,
-windowed on created_at (startDate/endDate) so each partition run loads one day.
+exposes cases that KenyaEMR has flagged against notifiable/priority conditions;
+only the EVD-relevant flags are requested (see FLAGS). Cases are windowed on
+load_date (startDate/endDate) so each partition run loads one day.
 
 Records are narrowed to a small demographic/location subset as they stream
 through; the subject's NUPI and address are dropped, but date of birth is
@@ -16,6 +17,9 @@ from dlt.sources.helpers.rest_client.paginators import PageNumberPaginator
 
 # earliest data to load; the partition start_date in defs.yaml must match
 INITIAL_VALUE = "2025-01-01T00:00:00.000Z"
+
+# only cases flagged against these conditions are requested
+FLAGS = "EBOLA,VIRAL HAEMORRHAGIC FEVER"
 
 
 def _client() -> RESTClient:
@@ -56,7 +60,7 @@ def map_case(c: dict) -> dict:
     """Reshape a case to the flat subset loaded from this source."""
     subject = c.get("subject") or {}
     return {
-        # id is the primary key; created_at is the incremental cursor. The
+        # id is the primary key; load_date is the incremental cursor. The
         # resource fails without both
         "id": c.get("caseUniqueId"),
         "patient_id": subject.get("patientUniqueId"),
@@ -66,7 +70,7 @@ def map_case(c: dict) -> dict:
         "sub_county": subject.get("subCounty"),
         "hospital_id": c.get("hospitalIdNumber"),
         "interview_date": c.get("interviewDate"),
-        "created_at": c.get("createdAt"),
+        "load_date": c.get("loadDate"),
     }
 
 
@@ -74,13 +78,17 @@ def map_case(c: dict) -> dict:
 def taifa_care_kenyaemr_source():
     @dlt.resource(name="flagged_cases", primary_key="id", write_disposition="append")
     def flagged_cases(
-        created_at=dlt.sources.incremental("created_at", initial_value=INITIAL_VALUE),
+        load_date=dlt.sources.incremental("load_date", initial_value=INITIAL_VALUE),
     ):
         client = _client()
-        params = {"size": 100, "startDate": created_at.last_value[:10]}
-        if created_at.end_value:
-            params["endDate"] = created_at.end_value[:10]
-        for page in client.paginate("case", params=params, data_selector="data.content"):
+        params = {
+            "size": 100,
+            "flags": FLAGS,
+            "startDate": load_date.last_value[:10],
+        }
+        if load_date.end_value:
+            params["endDate"] = load_date.end_value[:10]
+        for page in client.paginate("case", params=params, data_selector="data.data"):
             yield [map_case(c) for c in page]
 
     return flagged_cases
