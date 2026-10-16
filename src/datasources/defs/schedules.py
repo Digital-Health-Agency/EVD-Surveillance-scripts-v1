@@ -132,3 +132,18 @@ sync_taifa_care_kenyaemr_daily = dg.build_schedule_from_partitioned_job(
     description="Syncs the previous day's Taifa Care flagged cases every day at 08:00 UTC",
     default_status=dg.DefaultScheduleStatus.RUNNING,
 )
+
+nphiis_sync_job = dg.define_asset_job(
+    name="nphiis_sync_job",
+    selection=dg.AssetSelection.groups("nphiis"),
+    description="Loads NPHIIS screenings, VHF forms and locations for one partition (day) into MinIO",
+)
+
+# daily-partitioned job -> schedule fires at 02:00 UTC for the previous day
+sync_nphiis_daily = dg.build_schedule_from_partitioned_job(
+    nphiis_sync_job,
+    hour_of_day=2,
+    name="sync_nphiis_daily",
+    description="Syncs the previous day's NPHIIS records every day at 02:00 UTC",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
+)
