@@ -57,7 +57,7 @@ dg check defs                                # validates everything loads
 dg launch --assets "my_source/<resource>"    # test-run it
 ```
 
-Full walkthrough: [docs/adding-a-source.md](docs/adding-a-source.md). Use [`defs/mdharura/`](src/datasources/defs/mdharura/) as a working reference — it incrementally pulls EBS signals from the [m-Dharura API](https://api.m-dharura.health.go.ke/swaggerui/) and loads to MinIO (S3-compatible object storage). [`defs/adam/`](src/datasources/defs/adam/) shows a folder with two loaders (case investigations and traveller screenings) against a POST API. [`defs/nphiis/`](src/datasources/defs/nphiis/) pulls NPHIIS FHIR data (traveller screenings, VHF forms and lab results, screened patients, locations) through a Keycloak-secured FHIR API.
+Full walkthrough: [docs/adding-a-source.md](docs/adding-a-source.md). Use [`defs/mdharura/`](src/datasources/defs/mdharura/) as a working reference — it incrementally pulls EBS signals from the [m-Dharura API](https://api.m-dharura.health.go.ke/swaggerui/) and loads to MinIO (S3-compatible object storage). [`defs/adam/`](src/datasources/defs/adam/) shows a folder with two loaders (case investigations and traveller screenings) against a POST API. [`defs/nphiis/`](src/datasources/defs/nphiis/) pulls the NPHIIS VHF case and contact line lists from its hie-auth-secured REST report endpoints.
 
 ## Documentation
 
