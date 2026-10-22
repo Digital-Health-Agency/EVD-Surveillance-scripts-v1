@@ -1,3 +1,5 @@
+import datetime as dt
+
 import dagster as dg
 
 mdharura_sync_job = dg.define_asset_job(
@@ -123,3 +125,40 @@ sync_taifa_care_kenyaemr_daily = dg.build_schedule_from_partitioned_job(
     name="sync_taifa_care_kenyaemr_daily",
     description="Syncs the previous day's Taifa Care flagged cases every day at 08:00 UTC",
 )
+
+# one asset per configured HMIS instance; the partitions are given here (matching
+# tiberbu_hmis/defs.yaml) so the job still builds while no instance is configured
+tiberbu_hmis_sync_job = dg.define_asset_job(
+    name="tiberbu_hmis_sync_job",
+    selection=dg.AssetSelection.groups("tiberbu_hmis"),
+    partitions_def=dg.DailyPartitionsDefinition(start_date="2026-06-01"),
+    description="Loads Ebola screenings from every Tiberbu HMIS instance for one partition (day) into MinIO",
+)
+
+# Runs carrying this tag key queue one at a time (tag_concurrency_limits in
+# deploy/dagster.yaml): the instances share one dlt pipeline.
+TIBERBU_HMIS_RUN_TAG = "tiberbu_hmis/instance"
+
+
+@dg.schedule(
+    job=tiberbu_hmis_sync_job,
+    cron_schedule="0 9 * * *",
+    execution_timezone="UTC",
+    name="sync_tiberbu_hmis_screenings_daily",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
+    description=(
+        "Syncs the previous day's Ebola screenings from each Tiberbu HMIS instance every day "
+        "at 09:00 UTC, one run per instance, so an instance that is down fails only its own run"
+    ),
+)
+def sync_tiberbu_hmis_screenings_daily(context: dg.ScheduleEvaluationContext):
+    partition = (context.scheduled_execution_time - dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    asset_keys = dg.AssetSelection.groups("tiberbu_hmis").resolve(context.repository_def.asset_graph)
+    for key in sorted(asset_keys, key=lambda k: k.to_user_string()):
+        instance = key.path[-1].removeprefix("screenings_")
+        yield dg.RunRequest(
+            run_key=f"{partition}:{key.to_user_string()}",
+            partition_key=partition,
+            asset_selection=[key],
+            tags={TIBERBU_HMIS_RUN_TAG: instance},
+        )

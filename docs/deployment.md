@@ -65,6 +65,7 @@ Secrets in deployment are env vars only — the containers have no `.dlt/secrets
 Instance-level behavior (run queue size, run timeout) lives in [`deploy/dagster.yaml`](../deploy/dagster.yaml):
 
 - `QueuedRunCoordinator`, `max_concurrent_runs: 4` — the daemon launches all runs, so the UI stays responsive and a schedule tick can't stampede the source APIs.
+- `tag_concurrency_limits` on `tiberbu_hmis/instance`, limit 1 — the Tiberbu HMIS schedule starts one run per HMIS instance (so an instance that is down fails only its own run); those runs share one dlt pipeline, so they queue one at a time. Instances are listed either in `.dlt/config.toml` (`[datasources.tiberbu_hmis.instances.<code>]` with `base_url`) or, to keep the list out of the image, as env vars only: `DATASOURCES__TIBERBU_HMIS__INSTANCE_CODES='["isiolo", "nyeri"]'` plus `DATASOURCES__TIBERBU_HMIS__INSTANCES__ISIOLO__BASE_URL` per instance. Each instance's key and secret are env vars, e.g. `DATASOURCES__TIBERBU_HMIS__INSTANCES__ISIOLO__API_KEY` / `__API_SECRET`. Set them on both the webserver and daemon services (the asset list is built from them).
 - `run_monitoring.max_runtime_seconds: 14400` — runs are killed after 4 h; raise before very large backfills.
 
 ## Deploying changes
