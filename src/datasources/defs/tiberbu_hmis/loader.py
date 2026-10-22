@@ -9,7 +9,10 @@ Data Capture Forms source: a half-open [dateStart, dateEnd) window on
 Frappe's `message` envelope.
 
 The instances are listed in config (`[datasources.tiberbu_hmis.instances.<code>]`
-with a `base_url`), each with its own API key and secret in secrets. Each
+with a `base_url`) or, where only env vars are available, by code in
+`DATASOURCES__TIBERBU_HMIS__INSTANCE_CODES` (a JSON list or comma-separated) with
+`DATASOURCES__TIBERBU_HMIS__INSTANCES__<CODE>__BASE_URL` per instance. Each
+instance has its own API key and secret in secrets. Each
 instance is its own asset, `tiberbu_hmis/screenings_<code>`, so one instance can
 be run or backfilled alone; all instances load into the one `screenings` table,
 tagged with `instance`. Adding an instance is a config change.
@@ -26,6 +29,7 @@ edited. Writes are `append`: deduplicate downstream on
 (`instance`, `screeningIdentifier`), keeping the latest `modified`.
 """
 
+import json
 import re
 
 import dlt
@@ -43,16 +47,22 @@ INSTANCE_CODE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _instance_codes() -> list:
-    """The configured instance codes. Only their names are read here, so `dg check defs`
-    needs no credentials. (The [...instances.<code>] section can sit in both config and
-    secrets, so each setting is read by its full path at run time, never from this table.)"""
-    configured = dlt.config.get("datasources.tiberbu_hmis.instances") or {}
-    for code in configured:
+    """The configured instance codes: the [...instances.<code>] sections in config, plus
+    `instance_codes`, which env vars can carry (env vars cannot list a section's keys).
+    Only codes are read here, so `dg check defs` needs no credentials; each setting is read
+    by its full path at run time (the section can sit in both config and secrets)."""
+    codes = set(dlt.config.get("datasources.tiberbu_hmis.instances") or {})
+    listed = dlt.config.get("datasources.tiberbu_hmis.instance_codes") or []
+    if isinstance(listed, str):
+        text = listed.strip()
+        listed = json.loads(text) if text.startswith("[") else text.split(",")
+    codes.update(str(code).strip() for code in listed if str(code).strip())
+    for code in codes:
         if not INSTANCE_CODE.match(code):
             raise ValueError(
                 f"datasources.tiberbu_hmis.instances: '{code}' must be snake_case (it names an asset)"
             )
-    return sorted(configured)
+    return sorted(codes)
 
 
 def _client(code: str) -> RESTClient:

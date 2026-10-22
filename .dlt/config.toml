@@ -13,3 +13,7 @@ bucket_url = "s3://evd-echis/"
 #
 # [datasources.tiberbu_hmis.instances.isiolo]
 # base_url = "https://isiolo.hmis.example.org/api/method/"
+#
+# Or keep the list out of the repo, as env vars only:
+#   DATASOURCES__TIBERBU_HMIS__INSTANCE_CODES='["isiolo", "nyeri"]'
+#   DATASOURCES__TIBERBU_HMIS__INSTANCES__ISIOLO__BASE_URL=https://isiolo.hmis.example.org/api/method/
