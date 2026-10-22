@@ -5,3 +5,11 @@
 # MinIO bucket — name only; the server endpoint goes in
 # [destination.filesystem.credentials] (secrets.toml or env vars)
 bucket_url = "s3://evd-echis/"
+
+# Tiberbu HMIS: one entry per HMIS instance (each serves many facilities). The
+# key is a short snake_case instance code: it names the asset
+# (tiberbu_hmis/screenings_<code>) and tags every record. Each instance's API key
+# and secret go in secrets.toml under the same key. For example:
+#
+# [datasources.tiberbu_hmis.instances.isiolo]
+# base_url = "https://isiolo.hmis.example.org/api/method/"
