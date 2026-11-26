@@ -9,3 +9,9 @@ __pycache__
 .dg
 docs
 tests
+# dbt artifacts are rebuilt inside the image (dbt deps + dbt parse)
+transform/evd_transform/target
+transform/evd_transform/dbt_packages
+transform/evd_transform/logs
+.dagster_home
+.idea

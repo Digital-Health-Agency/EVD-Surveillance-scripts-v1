@@ -1,0 +1,383 @@
+# EVD Analytics Guide for API Consumers
+
+This guide describes the analytics data model exposed to API consumers,
+following the Medallion architecture (Bronze → Silver → Marts → Gold). It
+reflects the current state of the repo — see
+[`architecture.md`](architecture.md) for the underlying ETL design.
+
+## 1. Architecture Overview
+
+- **Bronze**: raw ingestion from source systems, no business
+  transformations.
+- **Silver**: cleaned, standardized, deduplicated datasets with harmonized
+  fields.
+- **Marts**: dimensional warehouse — conformed dimensions and fact tables.
+- **Gold**: business-ready reporting models, optimized for dashboards and
+  APIs.
+
+## 2. Bronze Layer
+
+Purpose: preserve source fidelity. Consumers: data engineers only.
+
+Sending systems landing in bronze today (ADAM has been replaced by NPHIIS
+for cases and contacts; the ADAM tables are retained for history):
+
+| Table | Sending system |
+|---|---|
+| `bronze.nphiis_cases_raw` | NPHIIS (cases) — live source |
+| `bronze.nphiis_contacts_raw` | NPHIIS (contacts) — live source |
+| `bronze.adam_cases_raw` | ADAM (cases + contacts, legacy) |
+| `bronze.adam_travellers_raw` | ADAM (travellers) |
+| `bronze.uhai_raw` | UHAI (traveler/case screenings) |
+| `bronze.lims_raw` | LIMS (lab results) |
+| `bronze.cbs_raw` | CBS (reports) |
+| `bronze.mdharura_raw` | mDharura (signals) |
+| `bronze.echis_raw` | eCHIS (signals) |
+| `bronze.krcs_evd_screening_raw` | KRCS EVD screening |
+
+## 3. Silver Layer
+
+Purpose: cleansed operational datasets. Only 4 of the 8 bronze sources have
+a silver model today — `cbs`, `mdharura`, `echis`, and `krcs_evd_screening`
+are ingested into bronze but have no silver transform yet.
+
+| Model | Source |
+|---|---|
+| `slv_nphiis_cases` | `bronze.nphiis_cases_raw` |
+| `slv_nphiis_contacts` | `bronze.nphiis_contacts_raw` |
+| `slv_adam_cases` | `bronze.adam_cases_raw` |
+| `slv_adam_travellers` | `bronze.adam_travellers_raw` |
+| `slv_uhai_cases` | `bronze.uhai_raw` |
+| `slv_lims_results` | `bronze.lims_raw` |
+
+Business rules applied: standardized dates, normalized Yes/No values,
+trimmed text, data type enforcement, duplicate removal.
+
+(`silver_lims__raw.sql` also exists as a passthrough `select *` over
+`bronze.lims_raw` — a legacy placeholder from before `slv_lims_results` was
+written; not a second source of truth.)
+
+## 4. Marts Layer
+
+Dimensions:
+
+- `dim_date` — calendar dimension (2020-2035), `date_key` surrogate key.
+- `dim_epiweek` — epi-week dimension derived from `dim_date`.
+- `dim_location` — deduped county/subcounty/ward/point-of-entry
+  combinations across ADAM and UHAI, `location_key` surrogate key.
+- `dim_facilitylist` — facility master list from the MFL seed,
+  `facility_key` surrogate key, `mfl_code`/`facility_name` for joins.
+- `dim_labtest` — deduped lab test/specimen/LOINC combinations from
+  `slv_lims_results`.
+
+Facts:
+
+- `fct_case_investigation` — one row per investigated case, unioning
+  NPHIIS cases (`slv_nphiis_cases`) and legacy ADAM cases
+  (`slv_adam_cases` where `type = 'case'`); keyed by
+  `source_system`/`source_record_id` (the NPHIIS EPID). A third branch
+  adds **lab-only confirmed cases**: one row per LIMS case
+  (`case_identifier`, e.g. `NVRL/1166/26`) with a POSITIVE EVD result
+  (`86518-8`) that no ADAM/NPHIIS record links to. These rows have
+  `source_system = 'LIMS'`, `case_record_origin = 'LAB_ONLY'`, the LIMS
+  case identifier as `source_record_id`/`source_person_name`/
+  `specimen_identifier`, and the requesting facility (upper-cased from
+  `dim_facilitylist`) as `health_facility`. The anti-join uses every
+  identifier LIMS exposes (specimen and case id), so as soon as a form
+  arrives carrying the specimen id the lab-only row disappears and the
+  form's row carries the confirmation instead. Rows from a form carry
+  `case_record_origin = 'INVESTIGATION'`.
+- `fct_contact_registration` — one row per registered contact, unioning
+  NPHIIS contacts (`slv_nphiis_contacts`) and legacy ADAM contacts. NPHIIS
+  rows carry contact-tracing attributes (`source_case_identifier` = index
+  case EPID, exposure date, relationship, follow-up end date, monitoring
+  status, symptomatic / seen-recently flags); these are null for ADAM.
+- `fct_treatment_outcome` — case outcomes (NPHIIS + ADAM) with a validated
+  `died_flag` (death date + CONFIRMED + POSITIVE source lab result). The
+  LIMS lab-only cases from `fct_case_investigation` are included with
+  `treatment_outcome = 'UNKNOWN'` so the outcome denominator matches the
+  case fact; they never add to deaths or recoveries.
+- `fct_screening` — unions ADAM traveller + UHAI screening records with the
+  same dimension joins and count pattern.
+- `fct_lab_result` — deduped LIMS results joined to facility and
+  collection/result date dims, with a categorized result
+  (Positive/Negative/Inconclusive/Unknown/Other). Grain is the test
+  event. Gold `report_lab_result` keeps `total_test_count` /
+  `positive_test_count` at that grain (laboratory reporting counts tests)
+  and adds case- and specimen-grain counters ranked within a test code:
+  `tested_case_count` / `positive_case_count` are 1 on the first (positive)
+  test of each LIMS case (`lab_case_key`), `tested_specimen_count` /
+  `positive_specimen_count` likewise per specimen, and
+  `repeat_case_test_flag` / `repeat_specimen_test_flag` mark the rest.
+  `sum(positive_case_count) where test_code = '86518-8'` must always equal
+  `sum(final_confirmed_count)` in `report_case_investigation`.
+Gold `report_case_investigation` links cases to LIMS on a whitespace-free
+key (`lims_link_key` macro) that matches either the LIMS specimen
+identifier (ADAM) or the LIMS case identifier (NPHIIS `specimen_id`, e.g.
+`NVRL/ 1098/ 26` → `NVRL/1098/26`). Only a linked LIMS POSITIVE makes a
+case CONFIRMED, and each LIMS case is counted once: when several records
+link to the same LIMS case, only the first (`lab_case_rank = 1`) gets
+`final_confirmed_count = 1`; the others keep the CONFIRMED classification
+with `duplicate_lab_case_flag = 1`. Together with the lab-only branch this
+means `sum(final_confirmed_count)` always equals the number of distinct
+LIMS cases with a positive EVD result. A source-system "Confirmed" with no
+specimen id still counts 0 (it resolves to UNKNOWN); the fix for those is
+the sending system capturing the NVRL id, not the warehouse.
+`report_contact_registration` joins each contact to its index case in
+`fct_case_investigation` via `source_case_identifier`.
+
+Dimensions are for filtering and drill-downs; facts provide measures.
+
+## 5. Gold Reporting Layer
+
+Six report models exist today. Not yet built (do not rely on these as API
+endpoints): `report_case_demographics`, `report_case_outcomes`,
+`report_contact_summary`.
+
+### `report_case_summary`
+
+Row-level case detail — one row per case from `fct_cases`, with
+location/facility/date surrogate keys resolved to display names. No
+aggregation, no rate metrics; use `report_case_trend` or
+`report_case_distribution` for weekly rollups.
+
+| Column | Description |
+|---|---|
+| `case_key` | Surrogate key for the case (hash of `source_system` + `source_record_id`) |
+| `source_system`, `source_record_id` | Originating system and its record identifier (dedup key) |
+| `system_id`, `identifier_number`, `specimen_id` | Case/patient/specimen identifiers as reported by the source |
+| `case_date_key`, `case_date` | Case date — surrogate key and resolved date |
+| `created_date_key`, `created_date`, `created_at` | Record creation date — surrogate key, resolved date, raw timestamp |
+| `location_key`, `county`, `subcounty`, `ward`, `point_of_entry` | Location surrogate key and resolved attributes |
+| `facility_key`, `mfl_code`, `facility_name` | Facility surrogate key and resolved attributes |
+| `record_type`, `case_classification`, `laboratory_result`, `outcome`, `samples_collected` | Case detail fields as reported |
+| `suspected_flag`, `probable_flag`, `confirmed_flag`, `tested_flag`, `died_flag`, `recovered_flag` | Boolean indicators derived from classification/outcome |
+| `case_count` | Always `1` — row-level counter, sum to get totals |
+| `suspected_case_count`, `probable_case_count`, `confirmed_case_count`, `tested_case_count`, `sample_collected_count`, `recovered_case_count`, `death_count` | `1`/`0` counters mirroring the boolean flags, for summing |
+| `batch_id`, `source_file` | Ingestion lineage — internal use only, never expose via public APIs (§9) |
+
+### `report_case_trend`
+
+Weekly case totals by geography/facility/source/record type, plus
+cumulative and trend analytics (moving average, week-over-week change).
+
+| Column | Description |
+|---|---|
+| `epi_week_key`, `epi_year`, `epi_week`, `epi_week_label`, `start_of_week`, `end_of_week` | Epi-week identifiers and calendar bounds |
+| `county`, `subcounty`, `ward`, `point_of_entry` | Location grouping |
+| `mfl_code`, `facility_name` | Facility grouping |
+| `source_system`, `record_type` | Source and record-type grouping |
+| `total_cases`, `suspected_cases`, `probable_cases`, `confirmed_cases`, `tested_cases`, `samples_collected`, `recovered_cases`, `deaths` | Weekly totals per case category |
+| `cumulative_cases`, `cumulative_confirmed_cases`, `cumulative_deaths` | Year-to-date running totals within the `epi_year`, partitioned by county/subcounty/`mfl_code`/`source_system`/`record_type` |
+| `moving_average_4_week_cases` | Trailing 4-week average of `total_cases` (same partition) |
+| `previous_week_cases` | `total_cases` from the prior epi-week (same partition) |
+| `weekly_case_change` | `total_cases` minus `previous_week_cases` |
+| `weekly_case_change_percentage` | Week-over-week % change |
+| `confirmation_rate` | `confirmed_cases` as % of `total_cases` |
+| `testing_rate` | `tested_cases` as % of `total_cases` |
+| `sample_collection_rate` | `samples_collected` as % of `total_cases` |
+| `recovery_rate` | `recovered_cases` as % of `confirmed_cases` |
+| `case_fatality_rate` | `deaths` as % of `confirmed_cases` |
+
+### `report_case_distribution`
+
+Weekly case totals by the same grouping as `report_case_trend`, with rate
+metrics but without the cumulative/trend columns.
+
+| Column | Description |
+|---|---|
+| `epi_week_key`, `epi_year`, `epi_week`, `epi_week_label`, `start_of_week`, `end_of_week` | Epi-week identifiers and calendar bounds |
+| `county`, `subcounty`, `ward`, `point_of_entry` | Location grouping |
+| `mfl_code`, `facility_name` | Facility grouping |
+| `source_system`, `record_type` | Source and record-type grouping |
+| `total_cases`, `suspected_cases`, `probable_cases`, `confirmed_cases`, `tested_cases`, `samples_collected`, `recovered_cases`, `deaths` | Weekly totals per case category |
+| `suspected_case_rate` | `suspected_cases` as % of `total_cases` |
+| `probable_case_rate` | `probable_cases` as % of `total_cases` |
+| `confirmation_rate` | `confirmed_cases` as % of `total_cases` |
+| `testing_rate` | `tested_cases` as % of `total_cases` |
+| `sample_collection_rate` | `samples_collected` as % of `total_cases` |
+| `recovery_rate` | `recovered_cases` as % of `confirmed_cases` |
+| `case_fatality_rate` | `deaths` as % of `confirmed_cases` |
+
+### `report_screening_summary`
+
+Daily screening activity, enriched with the containing epi-week, by
+geography/facility/source/classification.
+
+| Column | Description |
+|---|---|
+| `screening_date` | Calendar date of the screening |
+| `screening_year`, `screening_month_number`, `screening_month_name` | Date parts derived from `screening_date` |
+| `epi_week_key`, `epi_year`, `epi_week`, `epi_week_label`, `start_of_week`, `end_of_week` | Epi-week `screening_date` falls in |
+| `county`, `subcounty`, `ward`, `point_of_entry` | Location grouping |
+| `mfl_code`, `facility_name` | Facility grouping |
+| `source_system` | Sending system (ADAM travellers, UHAI) |
+| `classification`, `test_result` | Screening classification and test result as reported |
+| `total_screening_records` | Count of screening records in the group |
+| `total_screened` | Count actually screened |
+| `total_suspected` | Count flagged suspected |
+| `total_confirmed` | Count confirmed |
+| `total_tested` | Count tested |
+| `screening_completion_rate` | `total_screened` as % of `total_screening_records` |
+| `suspected_screening_rate` | `total_suspected` as % of `total_screened` |
+| `testing_rate` | `total_tested` as % of `total_suspected` |
+| `positivity_rate` | `total_confirmed` as % of `total_tested` |
+| `confirmed_screening_rate` | `total_confirmed` as % of `total_screened` |
+
+### `report_laboratory_summary`
+
+Weekly + monthly lab result totals by facility/test attributes.
+
+| Column | Description |
+|---|---|
+| `epi_week_key`, `epi_year`, `epi_week`, `epi_week_label`, `start_of_week`, `end_of_week` | Epi-week (from result date, falling back to collection date) |
+| `result_year`, `result_month_number`, `result_month_name` | Date parts derived from result date |
+| `county`, `subcounty` | Facility's location (from `dim_facilitylist`) |
+| `mfl_code`, `facility_name` | Facility grouping |
+| `source_system` | Sending system (LIMS) |
+| `specimen_type` | Type of specimen tested |
+| `loinc_code`, `test_name`, `code_text`, `component_code` | Test naming/coding attributes |
+| `unit` | Result unit of measure |
+| `result_category` | Categorized result (Positive/Negative/Inconclusive/Unknown/Other) |
+| `total_tests` | Count of tests in the group |
+| `positive_tests`, `negative_tests`, `inconclusive_tests`, `unknown_tests`, `other_tests` | Counts by result category |
+| `positivity_rate` | `positive_tests` as % of (positive + negative + inconclusive) tests |
+| `negative_rate` | `negative_tests` as % of `total_tests` |
+| `inconclusive_rate` | `inconclusive_tests` as % of `total_tests` |
+| `unknown_result_rate` | `unknown_tests` as % of `total_tests` |
+| `result_completion_rate` | (positive + negative + inconclusive) as % of `total_tests` |
+
+### `report_geographic_summary`
+
+Daily activity combining cases, screening, and lab results into one
+geography/facility-oriented table (each domain unioned in, not joined —
+see note below).
+
+| Column | Description |
+|---|---|
+| `activity_date` | Calendar date of the activity (case, screening, or lab) |
+| `activity_year`, `activity_month_number`, `activity_month_name` | Date parts derived from `activity_date` |
+| `epi_week_key`, `epi_year`, `epi_week`, `epi_week_label`, `start_of_week`, `end_of_week` | Epi-week `activity_date` falls in |
+| `county`, `subcounty`, `ward`, `point_of_entry` | Location grouping (`ward`/`point_of_entry` are null on lab-only rows) |
+| `mfl_code`, `facility_name` | Facility grouping |
+| `total_cases`, `confirmed_cases`, `tested_cases`, `deaths` | Case-domain totals (`0` on screening/lab-only rows) |
+| `total_screening_records`, `total_screened`, `suspected_screenings`, `confirmed_screenings`, `tested_screenings` | Screening-domain totals (`0` on case/lab-only rows) |
+| `laboratory_tests`, `positive_tests`, `negative_tests`, `inconclusive_tests` | Lab-domain totals (`0` on case/screening-only rows) |
+| `confirmation_rate` | `confirmed_cases` as % of `total_cases` |
+| `case_testing_rate` | `tested_cases` as % of `total_cases` |
+| `case_fatality_rate` | `deaths` as % of `confirmed_cases` |
+| `suspected_screening_rate` | `suspected_screenings` as % of `total_screened` |
+| `screening_testing_rate` | `tested_screenings` as % of `suspected_screenings` |
+| `screening_positivity_rate` | `confirmed_screenings` as % of `tested_screenings` |
+| `laboratory_positivity_rate` | `positive_tests` as % of (positive + negative + inconclusive) tests |
+
+Note: cases, screening, and lab activity are combined with `UNION ALL` by
+date/geography/facility, not joined — a given row typically has non-zero
+values in only one domain's columns. Aggregate across rows (e.g. `sum(...)
+group by county, epi_week`) to get a true cross-domain total for a
+geography/week.
+
+## 6. API Consumption Guidelines
+
+- Use Gold models for reporting.
+- Use Marts facts only for advanced analytics.
+- Avoid querying Bronze directly.
+- Filter using date, epidemiological week, county, subcounty, facility, and
+  `source_system` where available.
+
+## 7. Common Dimensions
+
+- **Time**: `full_date` (`dim_date`), epi_year/epi_week (`dim_epiweek`).
+- **Geography**: county, subcounty, ward, point_of_entry (`dim_location`,
+  `location_key`).
+- **Facility**: `facility_key`, `mfl_code`, `facility_name`
+  (`dim_facilitylist`).
+- **Source**: `source_system` values are `adam`, `uhai`, `lims`, `cbs`,
+  `mdharura`, `echis`, `krcs_evd_screening` — though only `adam`, `uhai`,
+  and `lims` currently flow through to marts/gold (see §3).
+
+## 8. Typical Analytics
+
+Executive KPIs, weekly case trends, screening performance, laboratory
+positivity, facility performance, geographic summaries, operational
+monitoring.
+
+## 9. Best Practices
+
+- Always query Gold for dashboards.
+- Join on surrogate keys (`case_key`, `location_key`, `facility_key`,
+  `date_key`).
+- Use `dim_epiweek` for weekly reporting.
+- Do not expose internal batch IDs (`batch_id`, `source_file`) through
+  public APIs.
+- Version API responses as models evolve.
+
+## 10. Transform Guide (Engineering)
+
+For engineers extending the dbt build (`transform/evd_transform/`), not
+just consuming its output.
+
+### Project layout
+
+```
+transform/evd_transform/
+├── models/
+│   ├── silver/                  # schema: silver
+│   │   └── _sources.yml         # declares bronze.* as dbt sources
+│   ├── marts/                   # schema: marts
+│   │   ├── dimensions/
+│   │   └── facts/
+│   └── gold/                    # schema: gold
+└── dbt_project.yml              # +materialized: table per layer
+```
+
+`transform/profiles.yml` lives in-repo, env-var driven — not `~/.dbt/`.
+
+### Enforced ref chain
+
+- `silver` models use `{{ source('bronze', '<table>') }}` — never a raw
+  table name.
+- `marts` models use `{{ ref(...) }}` only on `silver` models.
+- `gold` models use `{{ ref(...) }}` only on `marts` models (dimensions or
+  facts) — never on `silver` or `bronze` directly.
+
+This is enforced by convention, not a dbt constraint — verified today via
+`grep ref(` over `models/gold/`: every gold model's `ref()` calls resolve to
+`fct_*`/`dim_*` marts models, none to a `slv_*` silver model.
+
+### Adding a new bronze source through to gold
+
+1. Bronze wiring: see `CLAUDE.md`'s "Adding a new sending system" steps
+   (`build_bronze_asset`, `Definitions(assets=[...])` registration, dbt
+   source in `_sources.yml`).
+2. One silver model per meaningful entity
+   (`silver_<source>__<entity>.sql`), typing/casting/deduping the bronze
+   TEXT columns — use `make explore SOURCE=<name>` first to see the
+   inferred bronze shape before writing the cast list.
+3. Wire the new silver model into the relevant marts fact (union +
+   dedupe pattern, see `fct_cases.sql`) and/or dimension.
+4. Add or extend a gold report model if a new business view is needed.
+
+### Key commands
+
+- `dbt run` / `dbt run --select silver` / `dbt run --select marts+` —
+  build a layer and everything downstream.
+- `dbt test` — runs schema tests declared in model `.yml` files.
+- `make explore SOURCE=<name>` — dry-run: samples MinIO, prints the
+  inferred bronze schema without writing anything.
+- In production, `dbt run` isn't invoked manually — the Dagster
+  `evd_dbt_assets` (`assets/transform/`) wraps the dbt project and runs it
+  as part of the orchestrated pipeline.
+
+### Known gaps for maintainers
+
+- `silver_lims__raw.sql` is a legacy `select *` placeholder superseded by
+  `slv_lims_results.sql` — candidate for removal.
+- Schema/data tests are sparse: only `silver_lims__raw.yml` has any
+  (`unique`/`not_null` on `_raw_hash`) — most silver/marts/gold models have
+  no `.yml` tests yet.
+- `cbs`, `mdharura`, `echis`, `krcs_evd_screening` have bronze tables and
+  declared dbt sources but no silver model — first step for onboarding them
+  into marts/gold.
+- `fct_contact.sql` needs real contact-tracing source data and join logic;
+  currently a copy of `fct_cases.sql`.

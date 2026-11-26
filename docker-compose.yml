@@ -1,7 +1,9 @@
 # Dagster deployment: ONE image, TWO containers (webserver + daemon) sharing
-# SQLite storage via the dagster_data volume — no Postgres, no gRPC code
-# server, no per-run containers (DefaultRunLauncher). Config (dagster.yaml,
-# workspace.yaml) is baked into the image; only data lives in the volume.
+# SQLite storage via the dagster_data volume — no Dagster Postgres, no gRPC
+# code server, no per-run containers (DefaultRunLauncher). Config
+# (dagster.yaml, workspace.yaml) is baked into the image; only data lives in
+# the volume. Both code locations (datasources ingestion + evd_warehouse ETL)
+# run in this one deployment — see deploy/workspace.yaml.
 #
 # MinIO is expected to run separately; point MINIO_ENDPOINT_URL at it
 # (defaults to the host's MinIO at :9000). Copy .env.example to .env to
@@ -39,6 +41,17 @@ services:
       DATASOURCES__NPHIIS__TOKEN_URL: ${NPHIIS_TOKEN_URL:-}
       DATASOURCES__NPHIIS__CLIENT_ID: ${NPHIIS_CLIENT_ID:-}
       DATASOURCES__NPHIIS__CLIENT_SECRET: ${NPHIIS_CLIENT_SECRET:-}
+      # warehouse ETL (evd_warehouse code location): reads the same MinIO the
+      # dlt loaders write to (defaults reuse the values above), writes Postgres
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-${MINIO_ENDPOINT_URL:-http://host.docker.internal:9000}}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-${MINIO_ACCESS_KEY:-minioadmin}}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-${MINIO_SECRET_KEY:-minioadmin}}
+      MINIO_BUCKET: ${MINIO_BUCKET:-evd}
+      PG_HOST: ${PG_HOST:?set PG_HOST in .env}
+      PG_PORT: ${PG_PORT:-5432}
+      PG_DBNAME: ${PG_DBNAME:-evd_dwh}
+      PG_USER: ${PG_USER:?set PG_USER in .env}
+      PG_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD in .env}
     volumes:
       - dagster_data:/opt/dagster/data
     extra_hosts:

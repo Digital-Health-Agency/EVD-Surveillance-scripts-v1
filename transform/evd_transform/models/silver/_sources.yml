@@ -1,0 +1,49 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: bronze
+    description: >
+      Append-only landing tables, one per sending system. Column set is
+      inferred/evolved at ingest time by the Dagster bronze assets — additions
+      here should track new `bronze.*_raw` tables as sending systems are added,
+      not new columns within an existing table.
+    tables:
+      - name: lims_raw
+        description: Raw LIMS records, flattened and staged from MinIO.
+      - name: adam_cases_raw
+        description: Raw ADAM case records, flattened and staged from MinIO.
+      - name: adam_travellers_raw
+        description: Raw ADAM traveller records, flattened and staged from MinIO.
+      - name: cbs_raw
+        description: Raw CBS report records, flattened and staged from MinIO.
+      - name: cbs_screenings_raw
+        description: >
+          Raw CBS screening records, flattened and staged from MinIO. Sibling
+          data folder to cbs_raw (reports) under the same cbs_raw/ MinIO
+          prefix, staged into its own bronze table.
+      - name: mdharura_raw
+        description: Raw mDharura signal records, flattened and staged from MinIO.
+      - name: krcs_evd_screening_raw
+        description: >
+          Raw KRCS EVD screening records, flattened and staged from MinIO.
+          Data folder name wasn't known at integration time — the bronze
+          asset discovers it at run time and skips until it appears.
+      - name: krcs_evd_quarantine_raw
+        description: Raw KRCS EVD quarantine records, flattened and staged from MinIO.
+      - name: echis_raw
+        description: Raw eCHIS signal records, flattened and staged from MinIO.
+      - name: uhai_raw
+        description: Raw UHAI traveler screening records, flattened and staged from MinIO.
+      - name: taifa_care_kenyaemr_raw
+        description: >
+          Raw Taifa Care KenyaEMR flagged case records, flattened and staged
+          from MinIO.
+      - name: nphiis_cases_raw
+        description: >
+          Raw NPHIIS case records, flattened and staged from MinIO. Sibling
+          data folder to contacts under the same nphiis_raw/ MinIO prefix.
+      - name: nphiis_contacts_raw
+        description: >
+          Raw NPHIIS contact records, flattened and staged from MinIO. Sibling
+          data folder to cases under the same nphiis_raw/ MinIO prefix.

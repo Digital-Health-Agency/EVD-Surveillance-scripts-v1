@@ -210,3 +210,14 @@ __marimo__/
 .tmp_*
 # deploy target (internal infrastructure, never committed)
 deploy/.env.deploy
+
+# warehouse ETL: dbt build output + local Dagster home
+transform/evd_transform/target/
+transform/evd_transform/dbt_packages/
+transform/evd_transform/logs/
+transform/.user.yml
+logs/
+.dagster_home/
+.tmp_dagster_home*/
+.idea/
+.DS_Store

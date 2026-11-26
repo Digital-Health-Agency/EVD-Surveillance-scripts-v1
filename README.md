@@ -2,6 +2,15 @@
 
 A [Dagster](https://docs.dagster.io/) + [dlt](https://dlthub.com/docs) data platform for EVD surveillance data sources. Each data source lives in its own self-contained folder under `src/datasources/defs/` and is **discovered automatically** — adding a new source never requires touching shared code.
 
+It also contains the **EVD warehouse ETL** (formerly the separate `EVD-Warehouse-ETL` repo): MinIO → Postgres `bronze` → dbt `silver` → `marts` → `gold`. Both halves deploy as **one Dagster** — one image, one webserver, one daemon — with two code locations ([`deploy/workspace.yaml`](deploy/workspace.yaml)):
+
+| Code location | Package | Does | Schedules |
+| --- | --- | --- | --- |
+| `datasources` | [`src/datasources`](src/datasources/) | dlt loaders: source APIs → MinIO | one per source, 01:00–08:00 UTC ([`defs/schedules.py`](src/datasources/defs/schedules.py)) |
+| `evd_warehouse` | [`orchestration/evd_orchestration`](orchestration/evd_orchestration/) + dbt project [`transform/`](transform/) | MinIO → `bronze.*_raw` → dbt build | `ingest_job` daily 01:00 UTC; `dbt_job` triggered by a sensor after each successful ingest |
+
+Warehouse conventions (additive-only bronze schema, dbt layering) are in [`CLAUDE.md`](CLAUDE.md), its design in [docs/architecture.md](docs/architecture.md), and its local-dev guide in [docs/warehouse.md](docs/warehouse.md).
+
 ```
 src/datasources/
 ├── definitions.py              # autoloads everything under defs/ — never edit
@@ -70,6 +79,8 @@ Full walkthrough: [docs/adding-a-source.md](docs/adding-a-source.md). Use [`defs
 | [docs/pipelines-and-destinations.md](docs/pipelines-and-destinations.md) | Pipelines, the MinIO destination, configuration and secrets |
 | [docs/dagster.md](docs/dagster.md) | How Dagster discovers sources, asset keys, schedules, useful `dg` commands |
 | [docs/deployment.md](docs/deployment.md) | Docker Compose deployment: architecture, operations, troubleshooting |
+| [docs/warehouse.md](docs/warehouse.md) | Warehouse ETL: MinIO → Postgres bronze → dbt, local dev with `make` |
+| [docs/architecture.md](docs/architecture.md) | Warehouse design: bronze schema inference, medallion layers |
 
 ## Learn more
 
