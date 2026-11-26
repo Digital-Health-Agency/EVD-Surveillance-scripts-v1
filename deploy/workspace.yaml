@@ -1,7 +1,17 @@
 # Loaded by both dagster-webserver and dagster-daemon (-w workspace.yaml).
-# The project is installed in the image, so the code location loads in-process —
+# The project is installed in the image, so the code locations load in-process —
 # no separate gRPC server container needed.
+#
+# Two code locations, one Dagster instance (one UI, one daemon, one run queue):
+# - datasources: dlt loaders, source APIs -> MinIO, one schedule per source
+# - evd_warehouse: MinIO -> Postgres bronze -> dbt silver/marts/gold
+# Kept as separate locations so an import error in one (e.g. missing PG_*
+# env vars) doesn't take the other's schedules down.
 load_from:
   - python_module:
       module_name: datasources.definitions
       location_name: datasources
+  - python_module:
+      module_name: evd_orchestration
+      attribute: defs
+      location_name: evd_warehouse
