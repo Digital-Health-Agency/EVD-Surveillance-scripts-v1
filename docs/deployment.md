@@ -58,6 +58,8 @@ All runtime settings flow through environment variables set in `docker-compose.y
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DAGSTER_WEB_PORT` | `3000` | Host port for the UI |
+| `DAGSTER_WEB_BIND` | `0.0.0.0` | Host interface the UI port binds to — `127.0.0.1` behind a reverse proxy |
+| `DAGSTER_PATH_PREFIX` | empty (served at `/`) | URL path the UI lives under behind a proxy, e.g. `/dagster` (no trailing slash) |
 | `MINIO_ENDPOINT_URL` | `http://host.docker.internal:9000` | MinIO server, as reachable *from inside the containers* |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` | MinIO credentials — override outside local dev |
 | `BUCKET_URL` | `s3://evd/` | Target bucket (name only; endpoint stays in the credential vars) |
