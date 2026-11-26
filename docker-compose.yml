@@ -13,9 +13,12 @@ services:
   webserver:
     build: .
     image: evd-dagster
-    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "workspace.yaml"]
+    # behind a reverse proxy: DAGSTER_PATH_PREFIX=/dagster (no trailing slash)
+    # and DAGSTER_WEB_BIND=127.0.0.1 so the port is only reachable via the proxy
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "workspace.yaml",
+              "--path-prefix", "${DAGSTER_PATH_PREFIX:-}"]
     ports:
-      - "${DAGSTER_WEB_PORT:-3000}:3000"
+      - "${DAGSTER_WEB_BIND:-0.0.0.0}:${DAGSTER_WEB_PORT:-3000}:3000"
     environment: &dlt-env
       DESTINATION__FILESYSTEM__BUCKET_URL: ${BUCKET_URL:-s3://evd/}
       DESTINATION__FILESYSTEM__CREDENTIALS__AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
