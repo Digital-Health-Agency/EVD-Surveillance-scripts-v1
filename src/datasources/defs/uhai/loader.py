@@ -64,7 +64,33 @@ def _fetch_cases(date_from: str, date_to: str, offset: int) -> list[dict[str, An
     return cases
 
 
+# Fields the original integration mapped explicitly; their normalisation
+# (string ids, empty strings for missing values) is unchanged.
+_CASE_FIELDS = {
+    "system_id", "names", "sex", "age", "date_of_birth", "nationality",
+    "identifier_type", "identifier", "suspected", "screening", "confirmed",
+    "died", "recovered", "tested", "result", "point_of_entry",
+    "reporting_county", "reporting_sub_county", "ward", "facility_fid",
+    "community_health_unit_chu", "reporting_date", "reporting_time", "created_at",
+}
+
+
 def _case_record(case: dict[str, Any]) -> dict[str, Any]:
+    """Keep every field UHAI sends, normalising the originally mapped ones.
+
+    UHAI's surveillance API added contact, travel, clinical and exposure fields
+    on 27 Oct 2026 (phone_number, dependent_phone_number, is_dependent,
+    country_of_departure, entry_country, arrival_date, mode_of_transport,
+    transport_number, seat_number, temperature, symptoms, risk_factors, the
+    exposure questions and source). A fixed field list silently dropped them,
+    so any field outside it is now passed through as received; bronze adds a
+    column for each automatically.
+    """
+    extra = {key: value for key, value in case.items() if key not in _CASE_FIELDS}
+    return {**extra, **_mapped_fields(case)}
+
+
+def _mapped_fields(case: dict[str, Any]) -> dict[str, Any]:
     return {
         "system_id": str(case.get("system_id") or ""),
         "names": case.get("names") or "",
